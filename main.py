@@ -8,7 +8,9 @@ SEPARATOR = '---SEPARATOR---'
 # files that get a lot of lines deleted without meaningful contribution
 BLOCKED_FILENAMES = {'package-lock.json'}
 BLOCKED_FILE_EXTENSIONS = [
-    'csv',
+    '.csv',
+    '.json',
+    '.cy.js'
 ]
 
 
@@ -26,9 +28,9 @@ def main(since_date: str='last month') -> None:
     base_repo = git.Repo('')
     author_lines_deleted = collections.defaultdict(int)
 
-    repo_names = REPO_NAMES[:5]
+    for repo_name in REPO_NAMES[19:]:
+        print(f'PROCESSING: {repo_name}')
 
-    for repo_name in repo_names:
         try:
             # clone git repo
             cloned_repo = base_repo.clone_from(
@@ -37,15 +39,24 @@ def main(since_date: str='last month') -> None:
                 shallow_since=since_date,
                 single_branch=True,
             )
+        except FileNotFoundError:
+            # exit early if repo does not exist
+            print(f'ERROR: Repo {repo_name} was not found.')
+            continue
 
+        try:
             # pull all commit logs
-            commit_logs = cloned_repo.git.log(numstat=True, since=since_date, format=f'{SEPARATOR}%n%aN%n%ad')
+            commit_logs = cloned_repo.git.log(numstat=True, since=since_date, format=f'{SEPARATOR}%n%aN%n%ad%n%h')
             commit_logs = commit_logs.split(SEPARATOR)
             for commit_log in commit_logs:
                 if not commit_log:
                     continue
-                author_name, commit_date, _, *changed_files = commit_log.strip().split('\n')
+
+                author_name, commit_date, commit_hash, *changed_files = commit_log.strip().split('\n')
                 for changed_file in changed_files:
+                    if not changed_file:
+                        continue
+
                     lines_added, lines_deleted, filename = changed_file.strip().split('\t')
 
                     # skip binary files
@@ -55,7 +66,7 @@ def main(since_date: str='last month') -> None:
                     if filename in BLOCKED_FILENAMES:
                         continue
                     # skip files we don't want to track
-                    if filename.split('.')[-1] in BLOCKED_FILE_EXTENSIONS:
+                    if any(filename.endswith(extension) for extension in BLOCKED_FILE_EXTENSIONS):
                         continue
 
                     lines_added = int(lines_added)
@@ -63,10 +74,9 @@ def main(since_date: str='last month') -> None:
 
                     # if single file changes are very big, log it
                     if lines_added > 1000 or lines_deleted > 100:
-                        print(f'Found {lines_added} lines added and {lines_deleted} lines deleted in repo {repo_name} on file {filename}.')
+                        print(f'Found {lines_added} lines added and {lines_deleted} lines deleted in repo {repo_name} on file {filename} (commit hash {commit_hash}).')
 
                     author_lines_deleted[author_name] += lines_deleted
-
         finally:
             # delete cloned repo
             shutil.rmtree(f'repos/{repo_name}')
