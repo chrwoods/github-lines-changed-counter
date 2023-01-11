@@ -2,6 +2,8 @@ import collections
 import git
 import shutil
 
+from git import GitCommandError
+
 from settings import GIT_BASE_ORG_URL, REPO_NAMES
 
 SEPARATOR = '---SEPARATOR---'
@@ -10,7 +12,11 @@ BLOCKED_FILENAMES = {'package-lock.json'}
 BLOCKED_FILE_EXTENSIONS = [
     '.csv',
     '.json',
-    '.cy.js'
+    '.cy.js',
+    '.lkml',
+    '.secret',
+    '.public',
+    '.svg',
 ]
 
 
@@ -26,9 +32,10 @@ def pretty_print_author_lines(author_lines_count: dict) -> None:
 
 def main(since_date: str='last month') -> None:
     base_repo = git.Repo('')
+    author_lines_added = collections.defaultdict(int)
     author_lines_deleted = collections.defaultdict(int)
 
-    for repo_name in REPO_NAMES[19:]:
+    for repo_name in REPO_NAMES:
         print(f'PROCESSING: {repo_name}')
 
         try:
@@ -39,10 +46,20 @@ def main(since_date: str='last month') -> None:
                 shallow_since=since_date,
                 single_branch=True,
             )
-        except FileNotFoundError:
-            # exit early if repo does not exist
-            print(f'ERROR: Repo {repo_name} was not found.')
-            continue
+        except GitCommandError as e:
+            if 'fatal: Could not read from remote repository' in str(e):
+                # exit early if repo does not exist
+                print(f'ERROR: Repo {repo_name} was not found.')
+                continue
+            if 'fatal: the remote end hung up unexpectedly' in str(e):
+                # handle a strange git error and rerun without shallow since
+                cloned_repo = base_repo.clone_from(
+                    f'{GIT_BASE_ORG_URL}/{repo_name}.git',
+                    f'repos/{repo_name}',
+                    single_branch=True,
+                )
+            else:
+                raise e
 
         try:
             # pull all commit logs
@@ -76,14 +93,18 @@ def main(since_date: str='last month') -> None:
                     if lines_added > 1000 or lines_deleted > 100:
                         print(f'Found {lines_added} lines added and {lines_deleted} lines deleted in repo {repo_name} on file {filename} (commit hash {commit_hash}).')
 
+                    author_lines_added[author_name] += lines_added
                     author_lines_deleted[author_name] += lines_deleted
         finally:
             # delete cloned repo
             shutil.rmtree(f'repos/{repo_name}')
+
+    print('\nLINES ADDED:')
+    pretty_print_author_lines(author_lines_added)
 
     print('\nLINES DELETED:')
     pretty_print_author_lines(author_lines_deleted)
 
 
 if __name__ == "__main__":
-    main()
+    main('December 13, 2022')
